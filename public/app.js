@@ -138,7 +138,10 @@
         ? ` data-elapsed data-active-started-at="${escapeHtml(agent.activeStartedAt || "")}" data-elapsed-seconds="${escapeHtml(agent.elapsedSeconds ?? "")}" data-rendered-at="${Date.now()}"`
         : "";
       const noActivity = status === "busy" && !live;
-      return `<path id="${pathId}" class="cable live-cable ${status === "busy" ? "busy active" : status === "retry" ? "retry" : "idle muted"}${noActivity ? " no-activity" : ""}" d="${curve}" aria-hidden="true"></path>${packetMarkup}<g class="agent-node live-agent-node ${status}${noActivity ? " no-activity" : ""}" data-path="${pathId}" data-last-activity-at="${escapeHtml(agent.lastActivityAt || "")}" tabindex="0" role="group" aria-label="${escapeHtml(text(agent.name, "Unnamed agent"))}${escapeHtml(sessionSuffix)}, ${status} agent"><circle cx="${point.x}" cy="${point.y}" r="31"></circle><circle class="node-ring agent-ring" cx="${point.x}" cy="${point.y}" r="39"></circle><text x="${point.x}" y="${point.y - 1}">${escapeHtml(text(agent.name, "Unnamed agent"))}</text><text class="node-sub" x="${point.x}" y="${point.y + 14}"${elapsedAttributes}>${escapeHtml(detail)}</text></g>`;
+      const descriptionAttrs = agent.registered
+        ? ` data-agent-description="${escapeHtml(typeof agent.registered.description === "string" ? agent.registered.description : "")}" data-agent-native="${agent.registered.native === true}" data-agent-mode="${escapeHtml(agent.registered.mode || "")}"`
+        : "";
+      return `<path id="${pathId}" class="cable live-cable ${status === "busy" ? "busy active" : status === "retry" ? "retry" : "idle muted"}${noActivity ? " no-activity" : ""}" d="${curve}" aria-hidden="true"></path>${packetMarkup}<g class="agent-node live-agent-node ${status}${noActivity ? " no-activity" : ""}" data-path="${pathId}" data-last-activity-at="${escapeHtml(agent.lastActivityAt || "")}" data-agent-status="${escapeHtml(status)}"${descriptionAttrs} tabindex="0" role="group" aria-label="${escapeHtml(text(agent.name, "Unnamed agent"))}${escapeHtml(sessionSuffix)}, ${status} agent"><circle cx="${point.x}" cy="${point.y}" r="31"></circle><circle class="node-ring agent-ring" cx="${point.x}" cy="${point.y}" r="39"></circle><text x="${point.x}" y="${point.y - 1}">${escapeHtml(text(agent.name, "Unnamed agent"))}</text><text class="node-sub" x="${point.x}" y="${point.y + 14}"${elapsedAttributes}>${escapeHtml(detail)}</text></g>`;
     }).join("");
     packetNodes.push(...paths.filter((path) => path.active).map((path) => ({ ...path, selector: `${uid}-cable-${paths.indexOf(path)}` })));
     return `<article class="live-project-group"><header class="live-project-header"><div class="folder-mark" aria-hidden="true"></div><div class="group-heading"><p class="group-kicker">Project topology</p><h3>${escapeHtml(text(project.name, "Unnamed project"))}</h3><p class="group-path">${escapeHtml(compactPath(text(project.cwd, "Working directory unavailable")))}</p></div><span class="group-count">${activeCount} active${retryCount ? ` · ${retryCount} retry` : ""}</span></header><div class="live-diagram-wrap"><svg class="live-topology" viewBox="0 0 1000 370" role="img" aria-label="${escapeHtml(text(project.name, "Project"))} topology with ${activeCount} active agents" tabindex="0"><defs><pattern id="${uid}-grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#29372d" stroke-width="1" opacity=".42"></path></pattern><filter id="${uid}-glow"><feGaussianBlur stdDeviation="3" result="blur"></feGaussianBlur><feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs><rect class="diagram-grid" width="1000" height="370" fill="url(#${uid}-grid)"></rect><g>${agentMarkup}</g><g class="live-project-hub${retryCount ? " hub-retry" : ""}" tabindex="0" role="group" aria-label="${escapeHtml(text(project.name, "Project"))} project hub"><circle cx="500" cy="185" r="38"></circle><circle class="hub-ring" cx="500" cy="185" r="49"></circle><text x="500" y="181">${escapeHtml(text(project.name, "PROJECT").toUpperCase())}</text><text class="hub-count" x="500" y="196">${activeCount} ACTIVE</text></g></svg><p class="diagram-caption"><span class="legend"><span><i class="legend-dot"></i> working</span><span><i class="legend-dot retry"></i> retry</span><span><i class="legend-dot idle"></i> idle</span></span></p></div></article>`;
@@ -190,6 +193,7 @@
       els.list.querySelectorAll(".live-project-group").forEach((node) => node.remove());
       return;
     }
+    hideTooltip();
     els.list.innerHTML = projects.map(topologyMarkup).join("");
     updateElapsedTimers();
     updateLiveness();
@@ -254,6 +258,104 @@
       els.version.textContent = "Version unavailable";
     }
   }
+  const tooltipEl = document.createElement("div");
+  tooltipEl.className = "agent-tooltip";
+  tooltipEl.setAttribute("role", "tooltip");
+  tooltipEl.hidden = true;
+  document.body.appendChild(tooltipEl);
+  let tooltipRaf = 0;
+
+  function buildTooltipContent(node) {
+    if (!("agentDescription" in node.dataset)) return null;
+    const description = node.dataset.agentDescription || "";
+    const native = node.dataset.agentNative === "true";
+    const mode = node.dataset.agentMode || "";
+    const status = node.dataset.agentStatus || "idle";
+    let body = description.trim();
+    if (!body) {
+      if (native) body = "Native agent";
+      else if (mode) body = `${mode.charAt(0).toUpperCase()}${mode.slice(1)} agent`;
+      else body = "Registered agent";
+    }
+    const ariaLabel = node.getAttribute("aria-label") || "";
+    const name = ariaLabel.split(",")[0].trim() || "Agent";
+    const statusDot = `<span class="agent-tooltip-status" data-status="${escapeHtml(status)}" aria-hidden="true"></span>`;
+    const divider = `<span class="agent-tooltip-divider" aria-hidden="true"></span>`;
+    return `<span class="agent-tooltip-name">${statusDot}${escapeHtml(name)}</span>${divider}<span class="agent-tooltip-body">${escapeHtml(body)}</span>`;
+  }
+
+  function positionTooltip(node) {
+    const rect = node.getBoundingClientRect();
+    tooltipEl.style.left = "0px";
+    tooltipEl.style.top = "0px";
+    const tipRect = tooltipEl.getBoundingClientRect();
+    const margin = 12;
+    let top = rect.top - tipRect.height - margin;
+    let placeBelow = false;
+    if (top < margin) {
+      top = rect.bottom + margin;
+      placeBelow = true;
+    }
+    let left = rect.left + (rect.width - tipRect.width) / 2;
+    const maxLeft = window.innerWidth - tipRect.width - margin;
+    if (left < margin) left = margin;
+    if (left > maxLeft) left = maxLeft;
+    tooltipEl.style.top = `${Math.max(margin, top + window.scrollY)}px`;
+    tooltipEl.style.left = `${left + window.scrollX}px`;
+    tooltipEl.classList.toggle("below", placeBelow);
+    // Point the caret at the node center; clamp so it stays attached when the tooltip is shifted to the screen edge.
+    const nodeCenterX = rect.left + rect.width / 2;
+    const tipCenterX = left + tipRect.width / 2;
+    const caretPadding = 18;
+    const maxCaretOffset = Math.max(0, tipRect.width / 2 - caretPadding);
+    const caretOffset = Math.max(-maxCaretOffset, Math.min(maxCaretOffset, nodeCenterX - tipCenterX));
+    tooltipEl.style.setProperty("--caret-x", `${caretOffset}px`);
+  }
+
+  function showTooltip(node) {
+    const html = buildTooltipContent(node);
+    if (!html) return;
+    cancelAnimationFrame(tooltipRaf);
+    tooltipEl.innerHTML = html;
+    tooltipEl.hidden = false;
+    positionTooltip(node);
+    tooltipEl.classList.remove("is-visible");
+    // Force layout so the entrance transition runs from the hidden state.
+    void tooltipEl.offsetWidth;
+    tooltipRaf = requestAnimationFrame(() => {
+      tooltipEl.classList.add("is-visible");
+    });
+  }
+
+  function hideTooltip() {
+    cancelAnimationFrame(tooltipRaf);
+    tooltipEl.classList.remove("is-visible");
+    tooltipEl.hidden = true;
+    tooltipEl.innerHTML = "";
+  }
+
+  function tooltipNodeFor(event) {
+    return event.target.closest?.(".live-agent-node") || null;
+  }
+
+  els.list.addEventListener("mouseover", (event) => {
+    const node = tooltipNodeFor(event);
+    if (node) showTooltip(node);
+  });
+  els.list.addEventListener("mouseout", (event) => {
+    const node = tooltipNodeFor(event);
+    if (node && (!event.relatedTarget || !node.contains(event.relatedTarget))) hideTooltip();
+  });
+  els.list.addEventListener("focusin", (event) => {
+    const node = tooltipNodeFor(event);
+    if (node) showTooltip(node);
+  });
+  els.list.addEventListener("focusout", (event) => {
+    const node = tooltipNodeFor(event);
+    if (node && (!event.relatedTarget || !node.contains(event.relatedTarget))) hideTooltip();
+  });
+  window.addEventListener("scroll", hideTooltip, { passive: true });
+
   els.retry.addEventListener("click", () => {
     clearTimeout(retryTimer);
     loadState();
