@@ -66,7 +66,7 @@ h1,h2,h3,p { margin-top:0; }
 @media(max-width:700px){.live-project-header{align-items:flex-start;flex-direction:column;gap:9px}.live-topology{min-height:330px}}
 
 .live-topology .live-cable.no-activity{stroke:#425248;opacity:.4;filter:none}
-.live-agent-node.no-activity circle:first-child{fill:#151b17;stroke:#5e6e62;stroke-width:1.2;stroke-dasharray:2 4}.live-agent-node.no-activity .agent-ring{stroke:#5e6e62;opacity:.35}.live-agent-node.no-activity text{fill:var(--muted)}.live-agent-node.no-activity .node-sub{fill:var(--dim)}
+.live-agent-node.no-activity circle:first-child{fill:#12201e;stroke:#8fd6d0;stroke-width:1.4;stroke-dasharray:none}.live-agent-node.no-activity .agent-ring{stroke:#8fd6d0;opacity:.55}.live-agent-node.no-activity text{fill:var(--text)}.live-agent-node.no-activity .node-sub{fill:var(--accent)}
 
 /* Agent description tooltip */
 .agent-tooltip{
@@ -103,3 +103,20 @@ h1,h2,h3,p { margin-top:0; }
 .agent-tooltip-status[data-status="idle"]{background:#425248;color:#425248}
 .agent-tooltip-divider{display:block;height:1px;margin:0 -13px 8px;background:linear-gradient(90deg,transparent 0%,var(--tt-edge) 25%,var(--tt-edge) 75%,transparent 100%)}
 .agent-tooltip-body{display:block;color:var(--text);font-size:12px;line-height:1.5;letter-spacing:.005em;word-break:break-word}
+
+/* Agent activity bubble — chat-style speech bubble, dark themed, content-width */
+.activity-bubble{pointer-events:none;animation:activity-pulse 2.2s ease-in-out infinite}
+.activity-bubble .bubble-shape{fill:rgba(21,27,23,.94);stroke-width:1.2;stroke-linejoin:round}
+.activity-bubble text{font:500 8px 'DM Mono',monospace;letter-spacing:.04em;text-anchor:middle}
+.activity-bubble.activity-thinking .bubble-shape{stroke:#5e6e62}.activity-bubble.activity-thinking text{fill:var(--muted)}
+.activity-bubble.activity-reasoning .bubble-shape{stroke:#e5c473}.activity-bubble.activity-reasoning text{fill:#e5c473}
+.activity-bubble.activity-responding .bubble-shape{stroke:#9aa6c4}.activity-bubble.activity-responding text{fill:#9aa6c4}
+.activity-bubble.activity-write .bubble-shape{stroke:var(--accent)}.activity-bubble.activity-write text{fill:var(--accent)}
+.activity-bubble.activity-tool .bubble-shape{stroke:#8fd6d0}.activity-bubble.activity-tool text{fill:#8fd6d0}
+.activity-bubble.activity-mcp .bubble-shape{stroke:#c4a8ff}.activity-bubble.activity-mcp text{fill:#c4a8ff}
+.activity-bubble.activity-spawning .bubble-shape{stroke:#f0a868}.activity-bubble.activity-spawning text{fill:#f0a868}
+.activity-bubble.activity-retrying .bubble-shape{stroke:var(--danger)}.activity-bubble.activity-retrying text{fill:var(--danger)}
+.activity-bubble.activity-compacting .bubble-shape{stroke:#7a8fa6}.activity-bubble.activity-compacting text{fill:#7a8fa6}
+.activity-bubble.activity-waiting .bubble-shape{stroke:#d4b896}.activity-bubble.activity-waiting text{fill:#d4b896}
+@keyframes activity-pulse{0%,100%{opacity:.92}50%{opacity:.6}}
+@media(prefers-reduced-motion:reduce){.activity-bubble{animation:none!important}}

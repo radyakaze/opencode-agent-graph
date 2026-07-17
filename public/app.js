@@ -117,7 +117,7 @@
     const retryCount = agents.filter((agent) => normalizedStatus(agent.status) === "retry").length;
     const uid = projectId(project.name || project.cwd, index);
     const paths = [];
-    const agentMarkup = agents.map((agent, agentIndex) => {
+    const parts = agents.map((agent, agentIndex) => {
       const status = normalizedStatus(agent.status);
       const point = radialPoint(agentIndex, Math.max(agents.length, 1));
       const pathId = `${uid}-cable-${agentIndex}`;
@@ -141,10 +141,36 @@
       const descriptionAttrs = agent.registered
         ? ` data-agent-description="${escapeHtml(typeof agent.registered.description === "string" ? agent.registered.description : "")}" data-agent-native="${agent.registered.native === true}" data-agent-mode="${escapeHtml(agent.registered.mode || "")}"`
         : "";
-      return `<path id="${pathId}" class="cable live-cable ${status === "busy" ? "busy active" : status === "retry" ? "retry" : "idle muted"}${noActivity ? " no-activity" : ""}" d="${curve}" aria-hidden="true"></path>${packetMarkup}<g class="agent-node live-agent-node ${status}${noActivity ? " no-activity" : ""}" data-path="${pathId}" data-last-activity-at="${escapeHtml(agent.lastActivityAt || "")}" data-agent-status="${escapeHtml(status)}"${descriptionAttrs} tabindex="0" role="group" aria-label="${escapeHtml(text(agent.name, "Unnamed agent"))}${escapeHtml(sessionSuffix)}, ${status} agent"><circle cx="${point.x}" cy="${point.y}" r="31"></circle><circle class="node-ring agent-ring" cx="${point.x}" cy="${point.y}" r="39"></circle><text x="${point.x}" y="${point.y - 1}">${escapeHtml(text(agent.name, "Unnamed agent"))}</text><text class="node-sub" x="${point.x}" y="${point.y + 14}"${elapsedAttributes}>${escapeHtml(detail)}</text></g>`;
-    }).join("");
+      const activity = active && agent.currentActivity ? agent.currentActivity : null;
+      const bubble = (() => {
+        if (!activity) return "";
+        const label = text(activity.label, "active").slice(0, 40);
+        const charW = 5.2;
+        const padX = 6;
+        const maxW = 220;
+        const bubbleW = Math.min(label.length * charW + padX * 2, maxW);
+        const halfW = bubbleW / 2;
+        const rectH = 16;
+        const rectY = -rectH / 2;
+        const caretHalfW = 5;
+        const caretTipY = rectY + rectH + 6;
+        // Single closed path: rounded rect body with a triangular caret notch at
+        // the bottom-center. One continuous stroke — no border line between the
+        // rect and the caret.
+        const d = `M ${-halfW + 8} ${rectY} L ${halfW - 8} ${rectY} Q ${halfW} ${rectY} ${halfW} ${rectY + 8} L ${halfW} ${rectY + rectH - 8} Q ${halfW} ${rectY + rectH} ${halfW - 8} ${rectY + rectH} L ${caretHalfW} ${rectY + rectH} L 0 ${caretTipY} L ${-caretHalfW} ${rectY + rectH} L ${-halfW + 8} ${rectY + rectH} Q ${-halfW} ${rectY + rectH} ${-halfW} ${rectY + rectH - 8} L ${-halfW} ${rectY + 8} Q ${-halfW} ${rectY} ${-halfW + 8} ${rectY} Z`;
+        return `<g class="activity-bubble activity-${escapeHtml(activity.type)}" transform="translate(${point.x}, ${point.y - 53})" aria-hidden="true"><path class="bubble-shape" d="${d}"></path><text x="0" y="2.5">${escapeHtml(label)}</text></g>`;
+      })();
+      return {
+        nodeMarkup: `<path id="${pathId}" class="cable live-cable ${status === "busy" ? "busy active" : status === "retry" ? "retry" : "idle muted"}${noActivity ? " no-activity" : ""}" d="${curve}" aria-hidden="true"></path>${packetMarkup}<g class="agent-node live-agent-node ${status}${noActivity ? " no-activity" : ""}" data-path="${pathId}" data-last-activity-at="${escapeHtml(agent.lastActivityAt || "")}" data-agent-status="${escapeHtml(status)}"${descriptionAttrs} tabindex="0" role="group" aria-label="${escapeHtml(text(agent.name, "Unnamed agent"))}${escapeHtml(sessionSuffix)}, ${status} agent"><circle cx="${point.x}" cy="${point.y}" r="31"></circle><circle class="node-ring agent-ring" cx="${point.x}" cy="${point.y}" r="39"></circle><text x="${point.x}" y="${point.y - 1}">${escapeHtml(text(agent.name, "Unnamed agent"))}</text><text class="node-sub" x="${point.x}" y="${point.y + 14}"${elapsedAttributes}>${escapeHtml(detail)}</text></g>`,
+        bubbleMarkup: bubble,
+      };
+    });
+    // Render agent nodes first, then bubbles on top so bubbles never get
+    // covered by neighboring agent nodes (SVG paints in document order).
+    const agentMarkup = parts.map((p) => p.nodeMarkup).join("");
+    const bubbleMarkup = parts.map((p) => p.bubbleMarkup).join("");
     packetNodes.push(...paths.filter((path) => path.active).map((path) => ({ ...path, selector: `${uid}-cable-${paths.indexOf(path)}` })));
-    return `<article class="live-project-group"><header class="live-project-header"><div class="folder-mark" aria-hidden="true"></div><div class="group-heading"><p class="group-kicker">Project topology</p><h3>${escapeHtml(text(project.name, "Unnamed project"))}</h3><p class="group-path">${escapeHtml(compactPath(text(project.cwd, "Working directory unavailable")))}</p></div><span class="group-count">${activeCount} active${retryCount ? ` · ${retryCount} retry` : ""}</span></header><div class="live-diagram-wrap"><svg class="live-topology" viewBox="0 0 1000 370" role="img" aria-label="${escapeHtml(text(project.name, "Project"))} topology with ${activeCount} active agents" tabindex="0"><defs><pattern id="${uid}-grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#29372d" stroke-width="1" opacity=".42"></path></pattern><filter id="${uid}-glow"><feGaussianBlur stdDeviation="3" result="blur"></feGaussianBlur><feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs><rect class="diagram-grid" width="1000" height="370" fill="url(#${uid}-grid)"></rect><g>${agentMarkup}</g><g class="live-project-hub${retryCount ? " hub-retry" : ""}" tabindex="0" role="group" aria-label="${escapeHtml(text(project.name, "Project"))} project hub"><circle cx="500" cy="185" r="38"></circle><circle class="hub-ring" cx="500" cy="185" r="49"></circle><text x="500" y="181">${escapeHtml(text(project.name, "PROJECT").toUpperCase())}</text><text class="hub-count" x="500" y="196">${activeCount} ACTIVE</text></g></svg><p class="diagram-caption"><span class="legend"><span><i class="legend-dot"></i> working</span><span><i class="legend-dot retry"></i> retry</span><span><i class="legend-dot idle"></i> idle</span></span></p></div></article>`;
+    return `<article class="live-project-group"><header class="live-project-header"><div class="folder-mark" aria-hidden="true"></div><div class="group-heading"><p class="group-kicker">Project topology</p><h3>${escapeHtml(text(project.name, "Unnamed project"))}</h3><p class="group-path">${escapeHtml(compactPath(text(project.cwd, "Working directory unavailable")))}</p></div><span class="group-count">${activeCount} active${retryCount ? ` · ${retryCount} retry` : ""}</span></header><div class="live-diagram-wrap"><svg class="live-topology" viewBox="0 0 1000 370" role="img" aria-label="${escapeHtml(text(project.name, "Project"))} topology with ${activeCount} active agents" tabindex="0"><defs><pattern id="${uid}-grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#29372d" stroke-width="1" opacity=".42"></path></pattern><filter id="${uid}-glow"><feGaussianBlur stdDeviation="3" result="blur"></feGaussianBlur><feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs><rect class="diagram-grid" width="1000" height="370" fill="url(#${uid}-grid)"></rect><g>${agentMarkup}</g><g class="activity-bubbles">${bubbleMarkup}</g><g class="live-project-hub${retryCount ? " hub-retry" : ""}" tabindex="0" role="group" aria-label="${escapeHtml(text(project.name, "Project"))} project hub"><circle cx="500" cy="185" r="38"></circle><circle class="hub-ring" cx="500" cy="185" r="49"></circle><text x="500" y="181">${escapeHtml(text(project.name, "PROJECT").toUpperCase())}</text><text class="hub-count" x="500" y="196">${activeCount} ACTIVE</text></g></svg><p class="diagram-caption"><span class="legend"><span><i class="legend-dot"></i> working</span><span><i class="legend-dot retry"></i> retry</span><span><i class="legend-dot idle"></i> idle</span></span></p></div></article>`;
   }
 
   function updateLiveness() {
@@ -191,10 +217,18 @@
     if (!projects.length) {
       els.placeholder.innerHTML = `<span class="state-marker state-marker-empty" aria-hidden="true"></span><p>No active agents</p><span>Active plugin work will appear here.</span>`;
       els.list.querySelectorAll(".live-project-group").forEach((node) => node.remove());
+      hideTooltip();
       return;
     }
-    hideTooltip();
     els.list.innerHTML = projects.map(topologyMarkup).join("");
+    // Preserve tooltip hover across re-render: if the same agent node still
+    // exists (matched by aria-label which carries name + session id), just
+    // reposition to the new node; otherwise hide.
+    if (tooltipHoveredKey && !tooltipEl.hidden) {
+      const newNode = findAgentNodeByKey(tooltipHoveredKey);
+      if (newNode) repositionTooltipToNode(newNode);
+      else hideTooltip();
+    }
     updateElapsedTimers();
     updateLiveness();
     if (!reduceMotion.matches) packetFrame = requestAnimationFrame(animatePackets);
@@ -264,6 +298,17 @@
   tooltipEl.hidden = true;
   document.body.appendChild(tooltipEl);
   let tooltipRaf = 0;
+  let tooltipHoveredKey = null;
+
+  function agentNodeKey(node) {
+    if (!node) return null;
+    return node.getAttribute("aria-label") || node.getAttribute("data-path") || null;
+  }
+
+  function findAgentNodeByKey(key) {
+    if (!key) return null;
+    return els.list.querySelector(`.live-agent-node[aria-label="${CSS.escape(key)}"]`) || null;
+  }
 
   function buildTooltipContent(node) {
     if (!("agentDescription" in node.dataset)) return null;
@@ -315,6 +360,7 @@
   function showTooltip(node) {
     const html = buildTooltipContent(node);
     if (!html) return;
+    tooltipHoveredKey = agentNodeKey(node);
     cancelAnimationFrame(tooltipRaf);
     tooltipEl.innerHTML = html;
     tooltipEl.hidden = false;
@@ -328,10 +374,28 @@
   }
 
   function hideTooltip() {
+    tooltipHoveredKey = null;
     cancelAnimationFrame(tooltipRaf);
     tooltipEl.classList.remove("is-visible");
     tooltipEl.hidden = true;
     tooltipEl.innerHTML = "";
+  }
+
+  function refreshTooltipForNode(node) {
+    const html = buildTooltipContent(node);
+    if (!html) {
+      hideTooltip();
+      return;
+    }
+    // Only update content + position; skip the entrance animation reset so
+    // SSE re-renders don't cause flicker.
+    if (tooltipEl.innerHTML !== html) tooltipEl.innerHTML = html;
+    cancelAnimationFrame(tooltipRaf);
+    positionTooltip(node);
+  }
+
+  function repositionTooltipToNode(node) {
+    refreshTooltipForNode(node);
   }
 
   function tooltipNodeFor(event) {
