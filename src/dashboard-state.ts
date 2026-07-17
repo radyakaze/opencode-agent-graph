@@ -1,4 +1,5 @@
 import {
+  ActivityType,
   AgentInfo,
   DashboardState,
   DashboardEvent,
@@ -24,6 +25,21 @@ function publish(): void {
 }
 function timestamp(value: unknown): string {
   return typeof value === "string" ? value : new Date().toISOString();
+}
+const WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "write_file", "str_replace", "replace"]);
+function classifyTool(tool: string): ActivityType {
+  if (WRITE_TOOLS.has(tool)) return "write";
+  if (tool.startsWith("mcp__") || tool.startsWith("mcp.")) return "mcp";
+  return "tool";
+}
+function formatActivityLabel(tool: string, type: ActivityType): string {
+  if (type === "write") return "writing";
+  if (type === "mcp") {
+    const parts = tool.split("__");
+    const server = parts.length > 1 ? parts[1] : tool;
+    return `mcp ${server}`;
+  }
+  return tool;
 }
 function mergeAgents(input: unknown, cwd: unknown): void {
   if (!Array.isArray(input) || typeof cwd !== "string" || !cwd) return;
@@ -98,6 +114,7 @@ export function accept(input: unknown): void {
       startedAt: previous?.startedAt ?? timestamp(message.timestamp),
       activeStartedAt: previous?.activeStartedAt ?? null,
       lastActivityAt: previous?.lastActivityAt ?? timestamp(message.timestamp),
+      currentActivity: previous?.currentActivity ?? null,
     });
     publish();
     return;
@@ -115,7 +132,45 @@ export function accept(input: unknown): void {
   }
   if (message.kind === "toolActivity") {
     if (previous) {
+      const at = timestamp(message.timestamp);
+      previous.lastActivityAt = at;
+      const tool = typeof message.tool === "string" ? message.tool : "tool";
+      const phase = message.phase === "after" ? "after" : "before";
+      if (phase === "before") {
+        const type = classifyTool(tool);
+        previous.currentActivity = {
+          type,
+          label: formatActivityLabel(tool, type),
+          startedAt: at,
+          tool,
+        };
+      } else {
+        // Tool finished → back to thinking (or idle if not busy)
+        previous.currentActivity =
+          previous.status === "busy" || previous.status === "retry"
+            ? { type: "thinking", label: "Thinking", startedAt: at }
+            : null;
+      }
+      publish();
+    }
+    return;
+  }
+  if (message.kind === "activity") {
+    if (previous) {
+      const type = message.activityType as ActivityType;
+      // Dedup: message.part.updated fires on every token delta, but the
+      // activity type doesn't change for the same part — skip publish when
+      // the type is unchanged so the dashboard doesn't thrash.
+      if (previous.currentActivity?.type === type) {
+        previous.lastActivityAt = timestamp(message.timestamp);
+        return;
+      }
       previous.lastActivityAt = timestamp(message.timestamp);
+      previous.currentActivity = {
+        type,
+        label: typeof message.label === "string" ? message.label : "Active",
+        startedAt: timestamp(message.timestamp),
+      };
       publish();
     }
     return;
@@ -132,6 +187,10 @@ export function accept(input: unknown): void {
       ? message.cwd
       : process.cwd();
   const at = timestamp(message.timestamp);
+  const currentActivity =
+    status === "idle"
+      ? null
+      : previous?.currentActivity ?? { type: "thinking" as ActivityType, label: "Thinking", startedAt: at };
   sessions.set(id, {
     id,
     processId: message.processId,
@@ -146,6 +205,7 @@ export function accept(input: unknown): void {
     activeStartedAt:
       status === "idle" ? null : (previous?.activeStartedAt ?? at),
     lastActivityAt: previous?.lastActivityAt ?? at,
+    currentActivity,
   });
   publish();
 }
@@ -198,6 +258,7 @@ export function state(): DashboardState {
       activeStartedAt: session.activeStartedAt,
       lastActivityAt: session.lastActivityAt,
       startedAt: session.startedAt,
+      currentActivity: session.currentActivity,
       elapsedSeconds: session.activeStartedAt
         ? Math.max(
             0,

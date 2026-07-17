@@ -1,4 +1,11 @@
 export type Status = "busy" | "retry" | "idle";
+export type ActivityType = "reasoning" | "responding" | "thinking" | "write" | "tool" | "mcp" | "spawning" | "retrying" | "compacting" | "waiting";
+export type Activity = {
+  type: ActivityType;
+  label: string;
+  startedAt: string;
+  tool?: string;
+};
 export type AgentInfo = {
   name: string;
   description: string | null;
@@ -19,6 +26,7 @@ export type Session = {
   startedAt: string;
   activeStartedAt: string | null;
   lastActivityAt: string;
+  currentActivity: Activity | null;
 };
 export type DashboardEvent = Record<string, unknown>;
 export type DashboardState = {

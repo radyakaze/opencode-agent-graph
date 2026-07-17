@@ -44,11 +44,16 @@ export const ActiveAgentDashboard: Plugin = async (
   heartbeat();
   const timer = setInterval(heartbeat, 3_000) as ReturnType<typeof setInterval>;
   timer.unref?.();
-  const toolActivity = async (input: { sessionID: string }) => {
+  const toolActivity = async (
+    input: { sessionID: string; tool?: string; callID?: string },
+    phase: "before" | "after",
+  ) => {
     await graph.send({
       kind: "toolActivity",
       processId,
       sessionID: input.sessionID,
+      tool: typeof input.tool === "string" ? input.tool : "tool",
+      phase,
       timestamp: new Date().toISOString(),
     });
   };
@@ -65,8 +70,10 @@ export const ActiveAgentDashboard: Plugin = async (
         agent,
       });
     },
-    "tool.execute.before": toolActivity,
-    "tool.execute.after": toolActivity,
+    "tool.execute.before": (input: { sessionID: string; tool?: string; callID?: string }) =>
+      toolActivity(input, "before"),
+    "tool.execute.after": (input: { sessionID: string; tool?: string; callID?: string }) =>
+      toolActivity(input, "after"),
     event: async ({
       event,
     }: {
@@ -76,6 +83,90 @@ export const ActiveAgentDashboard: Plugin = async (
         event.properties && typeof event.properties === "object"
           ? (event.properties as Record<string, unknown>)
           : {};
+      // message.part.updated carries sessionID inside properties.part, not at
+      // the top level — handle it before the generic sessionID extraction.
+      if (event.type === "message.part.updated") {
+        const part =
+          properties.part && typeof properties.part === "object"
+            ? (properties.part as Record<string, unknown>)
+            : null;
+        if (!part) return;
+        const partSessionID =
+          typeof part.sessionID === "string" ? part.sessionID : undefined;
+        if (!partSessionID) return;
+        const partType = typeof part.type === "string" ? part.type : "";
+        const at = new Date().toISOString();
+        const sendActivity = (activityType: string, label: string) =>
+          graph.send({
+            kind: "activity",
+            processId,
+            sessionID: partSessionID,
+            activityType,
+            label,
+            timestamp: at,
+          });
+        if (partType === "reasoning") await sendActivity("reasoning", "Reasoning");
+        else if (partType === "text") await sendActivity("responding", "Responding");
+        else if (partType === "agent") {
+          const name = typeof part.name === "string" ? part.name : "agent";
+          await sendActivity("spawning", `Spawning ${name}`.slice(0, 20));
+        }
+        else if (partType === "retry") await sendActivity("retrying", "Retrying");
+        else if (partType === "compaction") await sendActivity("compacting", "Compacting");
+        else if (partType === "step-start") await sendActivity("thinking", "Thinking");
+        return;
+      }
+      // permission.asked/replied carry sessionID at the top level (not under
+      // info.id like session events) — handle before the generic extraction.
+      if (event.type === "permission.asked") {
+        const permSessionID =
+          typeof properties.sessionID === "string" ? properties.sessionID : undefined;
+        if (!permSessionID) return;
+        const permissionType =
+          typeof properties.permission === "string" ? properties.permission : "action";
+        const verbMap: Record<string, string> = {
+          read: "read",
+          edit: "edit",
+          write: "write",
+          bash: "run",
+          external_directory: "read",
+        };
+        const verb = verbMap[permissionType] || permissionType;
+        const metadata =
+          properties.metadata && typeof properties.metadata === "object"
+            ? (properties.metadata as Record<string, unknown>)
+            : {};
+        const filepath =
+          typeof metadata.filepath === "string" ? metadata.filepath : "";
+        const patterns = Array.isArray(properties.patterns) ? properties.patterns : [];
+        const target = filepath || (typeof patterns[0] === "string" ? patterns[0] : "");
+        const label = target
+          ? `Needs approval: ${verb} ${target}`.slice(0, 40)
+          : `Needs approval: ${verb}`.slice(0, 40);
+        await graph.send({
+          kind: "activity",
+          processId,
+          sessionID: permSessionID,
+          activityType: "waiting",
+          label,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+      if (event.type === "permission.replied") {
+        const permSessionID =
+          typeof properties.sessionID === "string" ? properties.sessionID : undefined;
+        if (!permSessionID) return;
+        await graph.send({
+          kind: "activity",
+          processId,
+          sessionID: permSessionID,
+          activityType: "thinking",
+          label: "Thinking",
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
       const info =
         properties.info && typeof properties.info === "object"
           ? (properties.info as Record<string, unknown>)
