@@ -4,7 +4,8 @@ OpenCode Agent Graph is a local OpenCode plugin for seeing multi-agent work as i
 
 ## Demo
 
-[Watch demo](./video.mp4)
+<video src="./video.mp4" width="100%" autoplay loop muted playsinline></video>
+
 
 ## Why use it
 
