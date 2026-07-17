@@ -15,12 +15,11 @@ const number = (value: unknown, fallback: number) =>
   value < 65536
     ? value
     : fallback;
-export const ActiveAgentDashboard: Plugin = async ({
-  directory,
-  client,
-  ...context
-}) => {
-  const config = (context as { options?: Config }).options ?? {};
+export const ActiveAgentDashboard: Plugin = async (
+  { directory, client },
+  options,
+) => {
+  const config = (options ?? {}) as Config;
   const host =
     config.host ?? process.env.OPENCODE_AGENT_GRAPH_HOST ?? "127.0.0.1";
   const port = number(
