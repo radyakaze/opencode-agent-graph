@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0d1110" />
+    <title>OpenCode Agent Graph</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="OpenCode Agent Graph home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>OpenCode Agent Graph</span>
+        </a>
+        <div class="topbar-meta">
+          <time class="clock" id="clock">--:--:--</time>
+        </div>
+      </header>
+
+      <main class="main-content">
+        <section class="sessions-section" aria-labelledby="sessions-title">
+          <div class="section-heading">
+            <div>
+              <h2 id="sessions-title">Active Projects</h2>
+            </div>
+            <div class="section-meta">
+              <div class="connection-summary" aria-live="polite">
+                <span class="status-indicator status-pending" id="summary-indicator" aria-hidden="true"></span>
+                <span id="summary-text">Connecting to local state</span>
+              </div>
+              <span class="event-count" id="session-count">Waiting for state</span>
+            </div>
+          </div>
+          <div class="sessions-list" id="sessions-list" aria-live="polite">
+            <div class="state-placeholder" id="state-placeholder">
+              <span class="state-marker state-marker-loading" aria-hidden="true"></span>
+              <p>Loading state</p>
+              <span>Active projects will appear when state is available.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="unavailable" id="unavailable" hidden aria-live="assertive">
+          <span class="unavailable-icon" aria-hidden="true">!</span>
+          <div>
+            <h2>State unavailable</h2>
+            <p>Plugin state is unavailable. Retry or wait for reconnection.</p>
+          </div>
+          <button type="button" id="retry-button">Retry</button>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>OpenCode Agent Graph</span>
+        <span id="version">Version unavailable</span>
+      </footer>
+    </div>
+    <script src="app.js" defer></script>
+  </body>
+</html>
