@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverAgents } from "./discovery.js";
 import { createGraphServer } from "./server.js";
-import { accept, processId } from "./dashboard-state.js";
+import { processId } from "./dashboard-state.js";
 
 type Input = { sessionID?: string; agent?: string };
 type Output = { message?: { agent?: string } };

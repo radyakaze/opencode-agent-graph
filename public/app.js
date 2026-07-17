@@ -44,9 +44,6 @@
     if (minutes) return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
     return `${remainder}s`;
   };
-  const initials = (name) => text(name, "?")
-    .split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
-
   function setConnection(state, label) {
     els.summary.textContent = label;
     els.summaryDot.className = `status-indicator status-${state}`;
@@ -184,7 +181,6 @@
   function renderState(payload) {
     const projects = Array.isArray(payload?.projects) ? payload.projects : [];
     activeProjectCount = projects.length;
-    const agents = projects.flatMap(mergeProjectAgents);
     els.sessionCount.textContent = `${activeProjectCount} active project${activeProjectCount === 1 ? "" : "s"}`;
     if (packetFrame) cancelAnimationFrame(packetFrame);
     packetNodes = [];
@@ -210,7 +206,7 @@
       setConnection("connected", connectedLabel());
       els.unavailable.hidden = true;
       connectStream();
-    } catch (_) {
+    } catch {
       setConnection("offline", "State unavailable");
       els.unavailable.hidden = false;
       scheduleRetry();
@@ -232,7 +228,7 @@
         renderState(JSON.parse(message.data));
         setConnection("connected", connectedLabel());
         els.unavailable.hidden = true;
-      } catch (_) {}
+      } catch {}
     });
     nextSource.onerror = () => {
       if (source !== nextSource || nextSource.readyState !== EventSource.CLOSED) return;
@@ -254,7 +250,7 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       els.version.textContent = `Version ${text(payload?.version, "unavailable")}`;
-    } catch (_) {
+    } catch {
       els.version.textContent = "Version unavailable";
     }
   }
