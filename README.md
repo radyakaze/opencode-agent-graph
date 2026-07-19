@@ -17,22 +17,16 @@ OpenCode Agent Graph is a OpenCode plugin for seeing multi-agent work as it happ
 
 ## Quick start
 
-Add the package name to `opencode.json`. OpenCode installs the plugin automatically on first use:
+Install the plugin globally:
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-agent-graph"]
-}
+```sh
+opencode plugin -g opencode-agent-graph
 ```
 
 Pin a version when needed:
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-agent-graph@1.0.1"]
-}
+```sh
+opencode plugin -g opencode-agent-graph@1.0.1
 ```
 
 After OpenCode starts the plugin, open the dashboard:
