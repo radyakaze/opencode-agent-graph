@@ -52,6 +52,8 @@
     "changelogen": "^0.6.2",
     "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
-    "typescript": "^7.0.2"
-  }
+    "typescript": "^7.0.2",
+    "@types/bun": "latest"
+  },
+  "private": true
 }

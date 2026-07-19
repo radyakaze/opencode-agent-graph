@@ -204,12 +204,23 @@ function buildEventHandlers(
   }
 }
 
-export const ActiveAgentDashboard: Plugin = async ({ directory, client }, options) => {
+export type CreateServer = (opts: { host: string; port: number; publicRoot: string }) => {
+  start: () => Promise<boolean>
+  send: (event: DashboardEvent) => Promise<void>
+  processId: string
+}
+
+export const ActiveAgentDashboard: Plugin = async (
+  { directory, client },
+  options,
+  deps?: { createServer?: CreateServer },
+) => {
+  const createServer = deps?.createServer ?? createGraphServer
   const config = (options ?? {}) as Config
   const host = config.host ?? process.env[HOST_ENV] ?? DEFAULT_HOST
   const port = clampPort(config.port ?? Number(process.env[PORT_ENV]), DEFAULT_PORT)
   const cwd = directory || process.cwd()
-  const graph = createGraphServer({
+  const graph = createServer({
     host,
     port,
     publicRoot: resolve(dirname(fileURLToPath(import.meta.url)), '../public'),

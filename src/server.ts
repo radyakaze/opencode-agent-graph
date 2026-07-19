@@ -73,11 +73,14 @@ export function createGraphServer(options: ServerOptions) {
       const path = resolve(options.publicRoot, `.${pathname === '/' ? '/index.html' : pathname}`)
       if (path !== options.publicRoot && !path.startsWith(`${options.publicRoot}/`))
         throw new Error()
+      const body = await readFile(path)
+      if (res.headersSent) return
       res.writeHead(200, {
         'content-type': `${MIME_TYPES[extname(path)] ?? FALLBACK_MIME}; charset=utf-8`,
       })
-      res.end(await readFile(path))
+      res.end(body)
     } catch {
+      if (res.headersSent) return
       json(res, { error: 'not found' }, 404)
     }
   }
