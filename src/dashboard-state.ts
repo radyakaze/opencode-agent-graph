@@ -6,250 +6,236 @@ import {
   projectName,
   Session,
   Status,
-} from "./dashboard-types.js";
+} from './dashboard-types.js'
 
-const sessions = new Map<string, Session>();
-const processes = new Map<string, number>();
-const availableAgents = new Map<string, Map<string, AgentInfo>>();
-const processCwds = new Map<string, Set<string>>();
-let updatedAt = new Date().toISOString();
-let notify: (() => void) | undefined;
-export const processId = `proc_${process.pid}`;
+const sessions = new Map<string, Session>()
+const processes = new Map<string, number>()
+const availableAgents = new Map<string, Map<string, AgentInfo>>()
+const processCwds = new Map<string, Set<string>>()
+let updatedAt = new Date().toISOString()
+let notify: (() => void) | undefined
+export const processId = `proc_${process.pid}`
 
 export function setNotifier(value: () => void): void {
-  notify = value;
+  notify = value
 }
 function publish(): void {
-  updatedAt = new Date().toISOString();
-  notify?.();
+  updatedAt = new Date().toISOString()
+  notify?.()
 }
 function timestamp(value: unknown): string {
-  return typeof value === "string" ? value : new Date().toISOString();
+  return typeof value === 'string' ? value : new Date().toISOString()
 }
-const WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "write_file", "str_replace", "replace"]);
+const WRITE_TOOLS = new Set([
+  'write',
+  'edit',
+  'apply_patch',
+  'write_file',
+  'str_replace',
+  'replace',
+])
 function classifyTool(tool: string): ActivityType {
-  if (WRITE_TOOLS.has(tool)) return "write";
-  if (tool.startsWith("mcp__") || tool.startsWith("mcp.")) return "mcp";
-  return "tool";
+  if (WRITE_TOOLS.has(tool)) return 'write'
+  if (tool.startsWith('mcp__') || tool.startsWith('mcp.')) return 'mcp'
+  return 'tool'
 }
 function formatActivityLabel(tool: string, type: ActivityType): string {
-  if (type === "write") return "writing";
-  if (type === "mcp") {
-    const parts = tool.split("__");
-    const server = parts.length > 1 ? parts[1] : tool;
-    return `mcp ${server}`;
+  if (type === 'write') return 'writing'
+  if (type === 'mcp') {
+    const parts = tool.split('__')
+    const server = parts.length > 1 ? parts[1] : tool
+    return `mcp ${server}`
   }
-  return tool;
+  return tool
 }
 function mergeAgents(input: unknown, cwd: unknown): void {
-  if (!Array.isArray(input) || typeof cwd !== "string" || !cwd) return;
-  const registry = availableAgents.get(cwd) ?? new Map<string, AgentInfo>();
-  availableAgents.set(cwd, registry);
-  let changed = false;
+  if (!Array.isArray(input) || typeof cwd !== 'string' || !cwd) return
+  const registry = availableAgents.get(cwd) ?? new Map<string, AgentInfo>()
+  availableAgents.set(cwd, registry)
+  let changed = false
   for (const raw of input) {
-    const item = raw && typeof raw === "object" ? (raw as DashboardEvent) : null;
-    if (!item || typeof item.name !== "string" || !item.name) continue;
-    let agent = registry.get(item.name);
+    const item = raw && typeof raw === 'object' ? (raw as DashboardEvent) : null
+    if (!item || typeof item.name !== 'string' || !item.name) continue
+    let agent = registry.get(item.name)
     if (!agent) {
       agent = {
         name: item.name,
-        description:
-          typeof item.description === "string" ? item.description : null,
-        mode: typeof item.mode === "string" ? item.mode : null,
+        description: typeof item.description === 'string' ? item.description : null,
+        mode: typeof item.mode === 'string' ? item.mode : null,
         hidden: item.hidden === true,
         native: item.native === true,
-        model: typeof item.model === "string" ? item.model : null,
+        model: typeof item.model === 'string' ? item.model : null,
         directories: new Set(),
-      };
-      registry.set(item.name, agent);
-      changed = true;
+      }
+      registry.set(item.name, agent)
+      changed = true
     }
     if (!agent.directories.has(cwd)) {
-      agent.directories.add(cwd);
-      changed = true;
+      agent.directories.add(cwd)
+      changed = true
     }
   }
-  if (changed) publish();
+  if (changed) publish()
 }
 export function accept(input: unknown): void {
-  const message =
-    input && typeof input === "object" ? (input as DashboardEvent) : null;
-  if (
-    !message ||
-    typeof message.kind !== "string" ||
-    typeof message.processId !== "string"
-  )
-    return;
-  processes.set(message.processId, Date.now());
-  if (
-    message.kind === "hello" ||
-    message.kind === "heartbeat" ||
-    message.kind === "agents"
-  ) {
-    if (typeof message.cwd === "string" && message.cwd) {
-      const cwds = processCwds.get(message.processId) ?? new Set<string>();
-      cwds.add(message.cwd);
-      processCwds.set(message.processId, cwds);
+  const message = input && typeof input === 'object' ? (input as DashboardEvent) : null
+  if (!message || typeof message.kind !== 'string' || typeof message.processId !== 'string') return
+  processes.set(message.processId, Date.now())
+  if (message.kind === 'hello' || message.kind === 'heartbeat' || message.kind === 'agents') {
+    if (typeof message.cwd === 'string' && message.cwd) {
+      const cwds = processCwds.get(message.processId) ?? new Set<string>()
+      cwds.add(message.cwd)
+      processCwds.set(message.processId, cwds)
     }
-    mergeAgents(message.agents, message.cwd);
-    if (message.kind === "agents") publish();
-    return;
+    mergeAgents(message.agents, message.cwd)
+    if (message.kind === 'agents') publish()
+    return
   }
-  if (typeof message.sessionID !== "string") return;
-  const id = `${message.processId}:${message.sessionID}`;
-  const previous = sessions.get(id);
-  if (message.kind === "created") {
-    const cwd =
-      typeof message.cwd === "string" && message.cwd
-        ? message.cwd
-        : process.cwd();
+  if (typeof message.sessionID !== 'string') return
+  const id = `${message.processId}:${message.sessionID}`
+  const previous = sessions.get(id)
+  if (message.kind === 'created') {
+    const cwd = typeof message.cwd === 'string' && message.cwd ? message.cwd : process.cwd()
     sessions.set(id, {
       id,
       processId: message.processId,
       sessionId: message.sessionID,
       cwd,
       projectName: projectName(cwd),
-      agent: typeof message.agent === "string" ? message.agent : null,
-      status: previous?.status ?? "idle",
+      agent: typeof message.agent === 'string' ? message.agent : null,
+      status: previous?.status ?? 'idle',
       startedAt: previous?.startedAt ?? timestamp(message.timestamp),
       activeStartedAt: previous?.activeStartedAt ?? null,
       lastActivityAt: previous?.lastActivityAt ?? timestamp(message.timestamp),
       currentActivity: previous?.currentActivity ?? null,
-    });
-    publish();
-    return;
+    })
+    publish()
+    return
   }
-  if (message.kind === "inactive") {
-    if (sessions.delete(id)) publish();
-    return;
+  if (message.kind === 'inactive') {
+    if (sessions.delete(id)) publish()
+    return
   }
-  if (message.kind === "agent") {
-    if (previous && typeof message.agent === "string") {
-      previous.agent = message.agent;
-      publish();
+  if (message.kind === 'agent') {
+    if (previous && typeof message.agent === 'string') {
+      previous.agent = message.agent
+      publish()
     }
-    return;
+    return
   }
-  if (message.kind === "toolActivity") {
+  if (message.kind === 'toolActivity') {
     if (previous) {
-      const at = timestamp(message.timestamp);
-      previous.lastActivityAt = at;
-      const tool = typeof message.tool === "string" ? message.tool : "tool";
-      const phase = message.phase === "after" ? "after" : "before";
-      if (phase === "before") {
-        const type = classifyTool(tool);
+      const at = timestamp(message.timestamp)
+      previous.lastActivityAt = at
+      const tool = typeof message.tool === 'string' ? message.tool : 'tool'
+      const phase = message.phase === 'after' ? 'after' : 'before'
+      if (phase === 'before') {
+        const type = classifyTool(tool)
         previous.currentActivity = {
           type,
           label: formatActivityLabel(tool, type),
           startedAt: at,
           tool,
-        };
+        }
       } else {
         // Tool finished → back to thinking (or idle if not busy)
         previous.currentActivity =
-          previous.status === "busy" || previous.status === "retry"
-            ? { type: "thinking", label: "Thinking", startedAt: at }
-            : null;
+          previous.status === 'busy' || previous.status === 'retry'
+            ? { type: 'thinking', label: 'Thinking', startedAt: at }
+            : null
       }
-      publish();
+      publish()
     }
-    return;
+    return
   }
-  if (message.kind === "activity") {
+  if (message.kind === 'activity') {
     if (previous) {
-      const type = message.activityType as ActivityType;
+      const type = message.activityType as ActivityType
       // Dedup: message.part.updated fires on every token delta, but the
       // activity type doesn't change for the same part — skip publish when
       // the type is unchanged so the dashboard doesn't thrash.
       if (previous.currentActivity?.type === type) {
-        previous.lastActivityAt = timestamp(message.timestamp);
-        return;
+        previous.lastActivityAt = timestamp(message.timestamp)
+        return
       }
-      previous.lastActivityAt = timestamp(message.timestamp);
+      previous.lastActivityAt = timestamp(message.timestamp)
       previous.currentActivity = {
         type,
-        label: typeof message.label === "string" ? message.label : "Active",
+        label: typeof message.label === 'string' ? message.label : 'Active',
         startedAt: timestamp(message.timestamp),
-      };
-      publish();
+      }
+      publish()
     }
-    return;
+    return
   }
-  if (message.kind !== "status") return;
+  if (message.kind !== 'status') return
   const status: Status =
-    message.status === "retry"
-      ? "retry"
-      : message.status === "idle"
-        ? "idle"
-        : "busy";
-  const cwd =
-    typeof message.cwd === "string" && message.cwd
-      ? message.cwd
-      : process.cwd();
-  const at = timestamp(message.timestamp);
+    message.status === 'retry' ? 'retry' : message.status === 'idle' ? 'idle' : 'busy'
+  const cwd = typeof message.cwd === 'string' && message.cwd ? message.cwd : process.cwd()
+  const at = timestamp(message.timestamp)
   const currentActivity =
-    status === "idle"
+    status === 'idle'
       ? null
-      : previous?.currentActivity ?? { type: "thinking" as ActivityType, label: "Thinking", startedAt: at };
+      : (previous?.currentActivity ?? {
+          type: 'thinking' as ActivityType,
+          label: 'Thinking',
+          startedAt: at,
+        })
   sessions.set(id, {
     id,
     processId: message.processId,
     sessionId: message.sessionID,
     cwd: previous?.cwd ?? cwd,
     projectName: previous?.projectName ?? projectName(cwd),
-    agent:
-      previous?.agent ??
-      (typeof message.agent === "string" ? message.agent : null),
+    agent: previous?.agent ?? (typeof message.agent === 'string' ? message.agent : null),
     status,
     startedAt: previous?.startedAt ?? at,
-    activeStartedAt:
-      status === "idle" ? null : (previous?.activeStartedAt ?? at),
+    activeStartedAt: status === 'idle' ? null : (previous?.activeStartedAt ?? at),
     lastActivityAt: previous?.lastActivityAt ?? at,
     currentActivity,
-  });
-  publish();
+  })
+  publish()
 }
 export function removeStale(cutoff: number): void {
-  let changed = false;
+  let changed = false
   for (const [id, seen] of processes)
     if (seen < cutoff) {
-      processes.delete(id);
-      const cwds = processCwds.get(id) ?? new Set<string>();
-      processCwds.delete(id);
+      processes.delete(id)
+      const cwds = processCwds.get(id) ?? new Set<string>()
+      processCwds.delete(id)
       for (const cwd of cwds) {
         const stillOwned = [...processCwds].some(
-          ([processId, ownedCwds]) =>
-            processes.has(processId) && ownedCwds.has(cwd),
-        );
-        if (!stillOwned && availableAgents.delete(cwd)) changed = true;
+          ([processId, ownedCwds]) => processes.has(processId) && ownedCwds.has(cwd),
+        )
+        if (!stillOwned && availableAgents.delete(cwd)) changed = true
       }
       for (const sessionId of sessions.keys())
         if (sessionId.startsWith(`${id}:`)) {
-          sessions.delete(sessionId);
-          changed = true;
+          sessions.delete(sessionId)
+          changed = true
         }
     }
-  if (changed) publish();
+  if (changed) publish()
 }
 export function state(): DashboardState {
-  const now = Date.now();
+  const now = Date.now()
   const grouped = new Map<
     string,
     {
-      cwd: string;
-      name: string;
-      agents: Array<Record<string, unknown>>;
-      availableAgents: AgentInfo[];
+      cwd: string
+      name: string
+      agents: Array<Record<string, unknown>>
+      availableAgents: AgentInfo[]
     }
-  >();
+  >()
   for (const session of sessions.values()) {
-    if (session.status !== "busy" && session.status !== "retry") continue;
+    if (session.status !== 'busy' && session.status !== 'retry') continue
     const project = grouped.get(session.cwd) ?? {
       cwd: session.cwd,
       name: session.projectName,
       agents: [],
       availableAgents: [],
-    };
+    }
     project.agents.push({
       name: session.agent,
       sessionId: session.sessionId,
@@ -260,13 +246,10 @@ export function state(): DashboardState {
       startedAt: session.startedAt,
       currentActivity: session.currentActivity,
       elapsedSeconds: session.activeStartedAt
-        ? Math.max(
-            0,
-            Math.floor((now - Date.parse(session.activeStartedAt)) / 1000),
-          )
+        ? Math.max(0, Math.floor((now - Date.parse(session.activeStartedAt)) / 1000))
         : 0,
-    });
-    grouped.set(session.cwd, project);
+    })
+    grouped.set(session.cwd, project)
   }
   for (const [cwd, registry] of availableAgents) {
     const project = grouped.get(cwd) ?? {
@@ -274,24 +257,20 @@ export function state(): DashboardState {
       name: projectName(cwd),
       agents: [],
       availableAgents: [],
-    };
-    project.availableAgents = [...registry.values()].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    grouped.set(cwd, project);
+    }
+    project.availableAgents = [...registry.values()].sort((a, b) => a.name.localeCompare(b.name))
+    grouped.set(cwd, project)
   }
   return {
     updatedAt,
     projects: [...grouped.values()]
-      .sort(
-        (a, b) => a.name.localeCompare(b.name) || a.cwd.localeCompare(b.cwd),
-      )
+      .sort((a, b) => a.name.localeCompare(b.name) || a.cwd.localeCompare(b.cwd))
       .map(({ availableAgents: agents, ...project }) => ({
         ...project,
         availableAgents: agents.map(({ directories: _, ...agent }) => agent),
         agents: project.agents.sort((a, b) =>
-          String(a.name ?? "").localeCompare(String(b.name ?? "")),
+          String(a.name ?? '').localeCompare(String(b.name ?? '')),
         ),
       })),
-  };
+  }
 }

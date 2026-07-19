@@ -31,6 +31,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "oxlint src public",
     "lint:fix": "oxlint --fix src public",
+    "format": "oxfmt --write src public",
+    "format:check": "oxfmt --check src public",
+    "fix": "bun run format && bun run lint:fix",
+    "check": "bun run format:check && bun run lint",
     "changelog": "changelogen",
     "release": "changelogen --release --no-output"
   },
@@ -45,6 +49,7 @@
   "devDependencies": {
     "@types/node": "^26.1.1",
     "changelogen": "^0.6.2",
+    "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
     "typescript": "^7.0.2"
   }
