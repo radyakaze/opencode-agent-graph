@@ -37,8 +37,8 @@ function publish(): void {
   updatedAt = new Date().toISOString()
   notify?.()
 }
-function timestamp(value: unknown): string {
-  return typeof value === 'string' ? value : new Date().toISOString()
+function timestamp(value: string | undefined): string {
+  return value ?? new Date().toISOString()
 }
 const WRITE_TOOLS = new Set([
   'write',
@@ -62,38 +62,35 @@ function formatActivityLabel(tool: string, type: ActivityType): string {
   }
   return tool
 }
-function normalizeStatus(value: unknown): Status {
-  return value === 'retry' ? 'retry' : value === 'idle' ? 'idle' : 'busy'
-}
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value ? value : null
 }
 function trackProcess(message: DashboardEvent): void {
-  if (typeof message.processId !== 'string') return
   processes.set(message.processId, Date.now())
-  if (typeof message.cwd === 'string' && message.cwd) {
+  if (message.cwd) {
     const cwds = processCwds.get(message.processId) ?? new Set<string>()
     cwds.add(message.cwd)
     processCwds.set(message.processId, cwds)
   }
 }
-function mergeAgents(input: unknown, cwd: unknown): void {
-  if (!Array.isArray(input) || typeof cwd !== 'string' || !cwd) return
+function mergeAgents(input: unknown, cwd: string | undefined): void {
+  if (!Array.isArray(input) || !cwd) return
   const registry = availableAgents.get(cwd) ?? new Map<string, AgentInfo>()
   availableAgents.set(cwd, registry)
   let changed = false
   for (const raw of input) {
-    const item = raw && typeof raw === 'object' ? (raw as DashboardEvent) : null
-    if (!item || typeof item.name !== 'string' || !item.name) continue
+    if (!raw || typeof raw !== 'object') continue
+    const item = raw as Record<string, unknown>
+    if (typeof item.name !== 'string' || !item.name) continue
     let agent = registry.get(item.name)
     if (!agent) {
       agent = {
         name: item.name,
-        description: typeof item.description === 'string' ? item.description : null,
-        mode: typeof item.mode === 'string' ? item.mode : null,
+        description: asString(item.description),
+        mode: asString(item.mode),
         hidden: item.hidden === true,
         native: item.native === true,
-        model: typeof item.model === 'string' ? item.model : null,
+        model: asString(item.model),
         directories: new Set(),
       }
       registry.set(item.name, agent)
@@ -107,57 +104,60 @@ function mergeAgents(input: unknown, cwd: unknown): void {
   if (changed) publish()
 }
 
-type Handler = (message: DashboardEvent) => void
-type SessionHandler = (id: string, previous: Session | undefined, message: DashboardEvent) => void
-
+type ControlHandler = (message: DashboardEvent) => void
 function handleHello(message: DashboardEvent): void {
-  mergeAgents(message.agents, message.cwd)
+  if (message.kind === 'hello') mergeAgents(message.agents, message.cwd)
 }
 function handleHeartbeat(message: DashboardEvent): void {
-  mergeAgents(message.agents, message.cwd)
+  if (message.kind === 'heartbeat') mergeAgents(message.agents, message.cwd)
 }
 function handleAgents(message: DashboardEvent): void {
+  if (message.kind !== 'agents') return
   mergeAgents(message.agents, message.cwd)
   publish()
 }
-const controlHandlers: Record<string, Handler> = {
+const controlHandlers: Record<DashboardEvent['kind'], ControlHandler | undefined> = {
   hello: handleHello,
   heartbeat: handleHeartbeat,
   agents: handleAgents,
+  created: undefined,
+  inactive: undefined,
+  agent: undefined,
+  toolActivity: undefined,
+  activity: undefined,
+  status: undefined,
 }
 
+type SessionHandler = (id: string, previous: Session | undefined, message: DashboardEvent) => void
+
 function handleCreated(id: string, previous: Session | undefined, message: DashboardEvent): void {
-  const cwd = asString(message.cwd) ?? process.cwd()
-  const startedAt = previous?.startedAt ?? timestamp(message.timestamp)
+  if (message.kind !== 'created') return
+  const cwd = message.cwd ?? process.cwd()
+  const at = timestamp(message.timestamp)
   sessions.set(id, {
     id,
-    processId: String(message.processId),
-    sessionId: String(message.sessionID),
+    processId: message.processId,
+    sessionId: message.sessionID,
     cwd,
     projectName: projectName(cwd),
     agent: asString(message.agent),
     status: previous?.status ?? 'idle',
-    startedAt,
+    startedAt: previous?.startedAt ?? at,
     activeStartedAt: previous?.activeStartedAt ?? null,
-    lastActivityAt: previous?.lastActivityAt ?? timestamp(message.timestamp),
+    lastActivityAt: previous?.lastActivityAt ?? at,
     currentActivity: previous?.currentActivity ?? null,
   })
   publish()
 }
-function handleInactive(id: string): boolean {
-  if (sessions.delete(id)) {
-    publish()
-    return true
-  }
-  return false
+function handleInactive(id: string): void {
+  if (sessions.delete(id)) publish()
 }
 function handleAgent(id: string, previous: Session | undefined, message: DashboardEvent): void {
-  if (previous) {
-    const agent = asString(message.agent)
-    if (agent !== null) {
-      previous.agent = agent
-      publish()
-    }
+  if (message.kind !== 'agent' || !previous) return
+  const agent = asString(message.agent)
+  if (agent !== null) {
+    previous.agent = agent
+    publish()
   }
 }
 function handleToolActivity(
@@ -165,10 +165,10 @@ function handleToolActivity(
   previous: Session | undefined,
   message: DashboardEvent,
 ): void {
-  if (!previous) return
+  if (message.kind !== 'toolActivity' || !previous) return
   const at = timestamp(message.timestamp)
   previous.lastActivityAt = at
-  const tool = asString(message.tool) ?? 'tool'
+  const tool = message.tool ?? 'tool'
   const phase = message.phase === 'after' ? 'after' : 'before'
   if (phase === 'before') {
     const type = classifyTool(tool)
@@ -188,8 +188,8 @@ function handleToolActivity(
   publish()
 }
 function handleActivity(id: string, previous: Session | undefined, message: DashboardEvent): void {
-  if (!previous) return
-  const type = message.activityType as ActivityType
+  if (message.kind !== 'activity' || !previous) return
+  const type = message.activityType
   // Dedup: message.part.updated fires on every token delta, but the
   // activity type doesn't change for the same part — skip publish when
   // the type is unchanged so the dashboard doesn't thrash.
@@ -200,14 +200,15 @@ function handleActivity(id: string, previous: Session | undefined, message: Dash
   previous.lastActivityAt = timestamp(message.timestamp)
   previous.currentActivity = {
     type,
-    label: asString(message.label) ?? 'Active',
+    label: message.label ?? 'Active',
     startedAt: timestamp(message.timestamp),
   }
   publish()
 }
 function handleStatus(id: string, previous: Session | undefined, message: DashboardEvent): void {
-  const status = normalizeStatus(message.status)
-  const cwd = asString(message.cwd) ?? process.cwd()
+  if (message.kind !== 'status') return
+  const status = message.status
+  const cwd = message.cwd ?? process.cwd()
   const at = timestamp(message.timestamp)
   const currentActivity =
     status === 'idle'
@@ -219,8 +220,8 @@ function handleStatus(id: string, previous: Session | undefined, message: Dashbo
         })
   sessions.set(id, {
     id,
-    processId: String(message.processId),
-    sessionId: String(message.sessionID),
+    processId: message.processId,
+    sessionId: message.sessionID,
     cwd: previous?.cwd ?? cwd,
     projectName: previous?.projectName ?? projectName(cwd),
     agent: previous?.agent ?? asString(message.agent),
@@ -232,27 +233,36 @@ function handleStatus(id: string, previous: Session | undefined, message: Dashbo
   })
   publish()
 }
-const sessionHandlers: Record<string, SessionHandler> = {
+const sessionHandlers: Record<DashboardEvent['kind'], SessionHandler | undefined> = {
+  hello: undefined,
+  heartbeat: undefined,
+  agents: undefined,
   created: handleCreated,
-  inactive: (id) => {
-    handleInactive(id)
-  },
+  inactive: (id) => handleInactive(id),
   agent: handleAgent,
   toolActivity: handleToolActivity,
   activity: handleActivity,
   status: handleStatus,
 }
 
+function isSessionEvent(
+  message: DashboardEvent,
+): message is Extract<DashboardEvent, { sessionID: string }> {
+  return 'sessionID' in message
+}
+
 export function accept(input: unknown): void {
-  const message = input && typeof input === 'object' ? (input as DashboardEvent) : null
-  if (!message || typeof message.kind !== 'string' || typeof message.processId !== 'string') return
+  if (!input || typeof input !== 'object') return
+  const candidate = input as Record<string, unknown>
+  if (typeof candidate.kind !== 'string' || typeof candidate.processId !== 'string') return
+  const message = candidate as unknown as DashboardEvent
   trackProcess(message)
   const control = controlHandlers[message.kind]
   if (control) {
     control(message)
     return
   }
-  if (typeof message.sessionID !== 'string') return
+  if (!isSessionEvent(message)) return
   const id = `${message.processId}:${message.sessionID}`
   const previous = sessions.get(id)
   const handler = sessionHandlers[message.kind]

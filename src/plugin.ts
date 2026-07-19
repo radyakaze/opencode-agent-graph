@@ -5,6 +5,7 @@ import { DEFAULT_HOST, DEFAULT_PORT, HEARTBEAT_INTERVAL_MS, MAX_PORT } from './c
 import { discoverAgents } from './discovery.js'
 import { processId } from './dashboard-state.js'
 import { createGraphServer } from './server.js'
+import type { ActivityType, Status } from './dashboard-types.js'
 
 type Input = { sessionID?: string; agent?: string }
 type Output = { message?: { agent?: string } }
@@ -86,7 +87,7 @@ function permissionLabel(properties: Properties): string {
 function partActivityLabel(
   partType: string,
   part: Properties,
-): { type: string; label: string } | null {
+): { type: ActivityType; label: string } | null {
   if (partType === 'reasoning') return { type: 'reasoning', label: 'Reasoning' }
   if (partType === 'text') return { type: 'responding', label: 'Responding' }
   if (partType === 'agent') {
@@ -97,6 +98,10 @@ function partActivityLabel(
   if (partType === 'compaction') return { type: 'compacting', label: 'Compacting' }
   if (partType === 'step-start') return { type: 'thinking', label: 'Thinking' }
   return null
+}
+
+function isStatus(value: unknown): value is Status {
+  return value === 'busy' || value === 'retry' || value === 'idle'
 }
 
 export const ActiveAgentDashboard: Plugin = async ({ directory, client }, options) => {
@@ -207,20 +212,20 @@ export const ActiveAgentDashboard: Plugin = async ({ directory, client }, option
           processId,
           sessionID,
           cwd: stringField(info, 'directory') ?? cwd,
-          agent: stringField(info, 'agent') ?? localAgents.get(sessionID) ?? null,
+          agent: stringField(info, 'agent') ?? localAgents.get(sessionID),
           timestamp: nowIso(),
         })
         return
       }
       if (event.type === 'session.status') {
         const status = (properties.status as Properties | undefined)?.type
-        if (status === 'busy' || status === 'retry' || status === 'idle')
+        if (isStatus(status))
           await graph.send({
             kind: 'status',
             processId,
             sessionID,
             cwd,
-            agent: localAgents.get(sessionID) ?? null,
+            agent: localAgents.get(sessionID),
             status,
             timestamp: nowIso(),
           })

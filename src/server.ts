@@ -10,6 +10,7 @@ import {
   STALE_TICK_INTERVAL_MS,
 } from './constants.js'
 import { accept, processId, removeStale, setNotifier, state } from './dashboard-state.js'
+import type { DashboardEvent } from './dashboard-types.js'
 
 export type ServerOptions = { host: string; port: number; publicRoot: string }
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -159,7 +160,7 @@ export function createGraphServer(options: ServerOptions) {
       return false
     }
   }
-  async function send(message: Record<string, unknown>) {
+  async function send(message: DashboardEvent) {
     if (server) return accept(message)
     try {
       if (!(await healthy()) && canElect()) {
