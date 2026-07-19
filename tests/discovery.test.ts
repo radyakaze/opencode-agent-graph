@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { discoverAgents } from './discovery.ts'
+import { discoverAgents } from '../src/discovery.ts'
 
 const DIRECTORY = '/tmp/test-project'
 

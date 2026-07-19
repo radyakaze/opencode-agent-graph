@@ -10,9 +10,20 @@
       "error",
       {
         "argsIgnorePattern": "^_",
-        "varsIgnorePattern": "^_"
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_"
       }
-    ]
+    ],
+    "no-console": "off"
   },
+  "overrides": [
+    {
+      "files": ["tests/**"],
+      "rules": {
+        "@typescript-eslint/no-explicit-any": "off",
+        "no-unused-expressions": "off"
+      }
+    }
+  ],
   "ignorePatterns": ["dist", "node_modules", "bun.lock"]
 }

@@ -6,8 +6,8 @@ import {
   removeStale,
   setNotifier,
   state,
-} from './dashboard-state.ts'
-import type { ActivityType } from './dashboard-types.ts'
+} from '../src/dashboard-state.ts'
+import type { ActivityType } from '../src/dashboard-types.ts'
 
 let notifications = 0
 beforeEach(() => {

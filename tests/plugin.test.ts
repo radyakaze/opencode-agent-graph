@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { ActiveAgentDashboard } from './plugin.ts'
-import { __resetForTests } from './dashboard-state.ts'
-import type { DashboardEvent } from './dashboard-types.js'
+import { ActiveAgentDashboard } from '../src/plugin.ts'
+import { __resetForTests } from '../src/dashboard-state.ts'
+import type { DashboardEvent } from '../src/dashboard-types.js'
 
 type SentEvent = DashboardEvent
 let sent: SentEvent[] = []

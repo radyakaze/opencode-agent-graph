@@ -29,13 +29,13 @@
   "scripts": {
     "build": "bun -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "oxlint src public",
-    "lint:fix": "oxlint --fix src public",
-    "format": "oxfmt --write src public",
-    "format:check": "oxfmt --check src public",
+    "lint": "oxlint src public tests",
+    "lint:fix": "oxlint --fix src public tests",
+    "format": "oxfmt --write src public tests",
+    "format:check": "oxfmt --check src public tests",
     "fix": "bun run format && bun run lint:fix",
     "check": "bun run format:check && bun run lint",
-    "test": "bun test src",
+    "test": "bun test tests",
     "changelog": "changelogen",
     "release": "changelogen --release --no-output"
   },

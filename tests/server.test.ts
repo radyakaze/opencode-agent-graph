@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { __resetForTests, accept } from './dashboard-state.ts'
-import { createGraphServer } from './server.ts'
-import type { DashboardEvent } from './dashboard-types.js'
+import { __resetForTests, accept } from '../src/dashboard-state.ts'
+import { createGraphServer } from '../src/server.ts'
+import type { DashboardEvent } from '../src/dashboard-types.js'
 
 type ServerHandle = ReturnType<typeof createGraphServer>
 const activeServers: ServerHandle[] = []
@@ -246,7 +246,7 @@ describe('createGraphServer — send() routing', () => {
     await server.send({ kind: 'heartbeat', processId: 'p-send', cwd: '/tmp/send' })
     // After send(), the state should reflect the new process — verify via
     // the state() function imported in dashboard-state.
-    const { state } = await import('./dashboard-state.ts')
+    const { state } = await import('../src/dashboard-state.ts')
     // state() doesn't surface heartbeats alone, but agents via /events do.
     // We just assert the call didn't throw.
     expect(state).toBeDefined()
