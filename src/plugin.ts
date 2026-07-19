@@ -1,21 +1,108 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DEFAULT_HOST, DEFAULT_PORT, HEARTBEAT_INTERVAL_MS, MAX_PORT } from './constants.js'
 import { discoverAgents } from './discovery.js'
-import { createGraphServer } from './server.js'
 import { processId } from './dashboard-state.js'
+import { createGraphServer } from './server.js'
 
 type Input = { sessionID?: string; agent?: string }
 type Output = { message?: { agent?: string } }
 type Config = { host?: string; port?: number }
-const number = (value: unknown, fallback: number) =>
-  typeof value === 'number' && Number.isInteger(value) && value > 0 && value < 65536
+type EventLike = { type?: string; properties?: unknown }
+type Properties = Record<string, unknown>
+
+const HOST_ENV = 'OPENCODE_AGENT_GRAPH_HOST'
+const PORT_ENV = 'OPENCODE_AGENT_GRAPH_PORT'
+const TOOL_NAME_FALLBACK = 'tool'
+const MAX_PERMISSION_LABEL = 40
+const MAX_SPAWN_LABEL = 20
+
+function clampPort(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value < MAX_PORT
     ? value
     : fallback
+}
+
+const PERMISSION_VERBS: Record<string, string> = {
+  read: 'read',
+  edit: 'edit',
+  write: 'write',
+  bash: 'run',
+  external_directory: 'read',
+}
+
+function verbFor(permission: string): string {
+  return PERMISSION_VERBS[permission] ?? permission
+}
+
+function stringField(record: Properties, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function asProperties(value: unknown): Properties {
+  return value && typeof value === 'object' ? (value as Properties) : {}
+}
+
+function extractPartSessionID(event: EventLike): string | undefined {
+  const part = event.properties && (event.properties as Properties).part
+  return part && typeof part === 'object' ? stringField(part as Properties, 'sessionID') : undefined
+}
+
+function extractPartType(event: EventLike): string {
+  const part = event.properties && (event.properties as Properties).part
+  if (!part || typeof part !== 'object') return ''
+  return stringField(part as Properties, 'type') ?? ''
+}
+
+function extractPermissionSessionID(properties: Properties): string | undefined {
+  return stringField(properties, 'sessionID')
+}
+
+function extractSessionID(info: Properties, properties: Properties): string | undefined {
+  return stringField(info, 'id') ?? stringField(properties, 'sessionID')
+}
+
+function permissionLabel(properties: Properties): string {
+  const permission = stringField(properties, 'permission') ?? 'action'
+  const verb = verbFor(permission)
+  const metadata = asProperties(properties.metadata)
+  const filepath = stringField(metadata, 'filepath')
+  const patterns = Array.isArray(properties.patterns) ? properties.patterns : []
+  const target = filepath ?? (typeof patterns[0] === 'string' ? (patterns[0] as string) : '')
+  const phrase = target ? `Needs approval: ${verb} ${target}` : `Needs approval: ${verb}`
+  return truncate(phrase, MAX_PERMISSION_LABEL)
+}
+
+function partActivityLabel(
+  partType: string,
+  part: Properties,
+): { type: string; label: string } | null {
+  if (partType === 'reasoning') return { type: 'reasoning', label: 'Reasoning' }
+  if (partType === 'text') return { type: 'responding', label: 'Responding' }
+  if (partType === 'agent') {
+    const name = stringField(part, 'name') ?? 'agent'
+    return { type: 'spawning', label: truncate(`Spawning ${name}`, MAX_SPAWN_LABEL) }
+  }
+  if (partType === 'retry') return { type: 'retrying', label: 'Retrying' }
+  if (partType === 'compaction') return { type: 'compacting', label: 'Compacting' }
+  if (partType === 'step-start') return { type: 'thinking', label: 'Thinking' }
+  return null
+}
+
 export const ActiveAgentDashboard: Plugin = async ({ directory, client }, options) => {
   const config = (options ?? {}) as Config
-  const host = config.host ?? process.env.OPENCODE_AGENT_GRAPH_HOST ?? '127.0.0.1'
-  const port = number(config.port ?? Number(process.env.OPENCODE_AGENT_GRAPH_PORT), 8818)
+  const host = config.host ?? process.env[HOST_ENV] ?? DEFAULT_HOST
+  const port = clampPort(config.port ?? Number(process.env[PORT_ENV]), DEFAULT_PORT)
   const cwd = directory || process.cwd()
   const graph = createGraphServer({
     host,
@@ -31,7 +118,7 @@ export const ActiveAgentDashboard: Plugin = async ({ directory, client }, option
   void graph.start()
   const heartbeat = () => void graph.send({ kind: 'heartbeat', processId, cwd, agents })
   heartbeat()
-  const timer = setInterval(heartbeat, 3_000) as ReturnType<typeof setInterval>
+  const timer = setInterval(heartbeat, HEARTBEAT_INTERVAL_MS) as ReturnType<typeof setInterval>
   timer.unref?.()
   const toolActivity = async (
     input: { sessionID: string; tool?: string; callID?: string },
@@ -41,9 +128,9 @@ export const ActiveAgentDashboard: Plugin = async ({ directory, client }, option
       kind: 'toolActivity',
       processId,
       sessionID: input.sessionID,
-      tool: typeof input.tool === 'string' ? input.tool : 'tool',
+      tool: stringField(input as Properties, 'tool') ?? TOOL_NAME_FALLBACK,
       phase,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     })
   }
   return {
@@ -63,81 +150,43 @@ export const ActiveAgentDashboard: Plugin = async ({ directory, client }, option
       toolActivity(input, 'before'),
     'tool.execute.after': (input: { sessionID: string; tool?: string; callID?: string }) =>
       toolActivity(input, 'after'),
-    event: async ({ event }: { event: { type?: string; properties?: unknown } }) => {
-      const properties =
-        event.properties && typeof event.properties === 'object'
-          ? (event.properties as Record<string, unknown>)
-          : {}
+    event: async ({ event }: { event: EventLike }) => {
+      const properties = asProperties(event.properties)
       // message.part.updated carries sessionID inside properties.part, not at
       // the top level — handle it before the generic sessionID extraction.
       if (event.type === 'message.part.updated') {
-        const part =
-          properties.part && typeof properties.part === 'object'
-            ? (properties.part as Record<string, unknown>)
-            : null
-        if (!part) return
-        const partSessionID = typeof part.sessionID === 'string' ? part.sessionID : undefined
+        const partSessionID = extractPartSessionID(event)
         if (!partSessionID) return
-        const partType = typeof part.type === 'string' ? part.type : ''
-        const at = new Date().toISOString()
-        const sendActivity = (activityType: string, label: string) =>
-          graph.send({
-            kind: 'activity',
-            processId,
-            sessionID: partSessionID,
-            activityType,
-            label,
-            timestamp: at,
-          })
-        if (partType === 'reasoning') await sendActivity('reasoning', 'Reasoning')
-        else if (partType === 'text') await sendActivity('responding', 'Responding')
-        else if (partType === 'agent') {
-          const name = typeof part.name === 'string' ? part.name : 'agent'
-          await sendActivity('spawning', `Spawning ${name}`.slice(0, 20))
-        } else if (partType === 'retry') await sendActivity('retrying', 'Retrying')
-        else if (partType === 'compaction') await sendActivity('compacting', 'Compacting')
-        else if (partType === 'step-start') await sendActivity('thinking', 'Thinking')
+        const part = (event.properties as Properties).part as Properties
+        const activity = partActivityLabel(extractPartType(event), part)
+        if (!activity) return
+        await graph.send({
+          kind: 'activity',
+          processId,
+          sessionID: partSessionID,
+          activityType: activity.type,
+          label: activity.label,
+          timestamp: nowIso(),
+        })
         return
       }
       // permission.asked/replied carry sessionID at the top level (not under
       // info.id like session events) — handle before the generic extraction.
       if (event.type === 'permission.asked') {
-        const permSessionID =
-          typeof properties.sessionID === 'string' ? properties.sessionID : undefined
+        const permSessionID = extractPermissionSessionID(properties)
         if (!permSessionID) return
-        const permissionType =
-          typeof properties.permission === 'string' ? properties.permission : 'action'
-        const verbMap: Record<string, string> = {
-          read: 'read',
-          edit: 'edit',
-          write: 'write',
-          bash: 'run',
-          external_directory: 'read',
-        }
-        const verb = verbMap[permissionType] || permissionType
-        const metadata =
-          properties.metadata && typeof properties.metadata === 'object'
-            ? (properties.metadata as Record<string, unknown>)
-            : {}
-        const filepath = typeof metadata.filepath === 'string' ? metadata.filepath : ''
-        const patterns = Array.isArray(properties.patterns) ? properties.patterns : []
-        const target = filepath || (typeof patterns[0] === 'string' ? patterns[0] : '')
-        const label = target
-          ? `Needs approval: ${verb} ${target}`.slice(0, 40)
-          : `Needs approval: ${verb}`.slice(0, 40)
         await graph.send({
           kind: 'activity',
           processId,
           sessionID: permSessionID,
           activityType: 'waiting',
-          label,
-          timestamp: new Date().toISOString(),
+          label: permissionLabel(properties),
+          timestamp: nowIso(),
         })
         return
       }
       if (event.type === 'permission.replied') {
-        const permSessionID =
-          typeof properties.sessionID === 'string' ? properties.sessionID : undefined
+        const permSessionID = extractPermissionSessionID(properties)
         if (!permSessionID) return
         await graph.send({
           kind: 'activity',
@@ -145,32 +194,26 @@ export const ActiveAgentDashboard: Plugin = async ({ directory, client }, option
           sessionID: permSessionID,
           activityType: 'thinking',
           label: 'Thinking',
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
         })
         return
       }
-      const info =
-        properties.info && typeof properties.info === 'object'
-          ? (properties.info as Record<string, unknown>)
-          : properties
-      const sessionID =
-        typeof info.id === 'string'
-          ? info.id
-          : typeof properties.sessionID === 'string'
-            ? properties.sessionID
-            : undefined
+      const info = asProperties(properties.info)
+      const sessionID = extractSessionID(info, properties)
       if (!sessionID) return
-      if (event.type === 'session.created')
+      if (event.type === 'session.created') {
         await graph.send({
           kind: 'created',
           processId,
           sessionID,
-          cwd: typeof info.directory === 'string' ? info.directory : cwd,
-          agent: typeof info.agent === 'string' ? info.agent : (localAgents.get(sessionID) ?? null),
-          timestamp: new Date().toISOString(),
+          cwd: stringField(info, 'directory') ?? cwd,
+          agent: stringField(info, 'agent') ?? localAgents.get(sessionID) ?? null,
+          timestamp: nowIso(),
         })
-      else if (event.type === 'session.status') {
-        const status = (properties.status as Record<string, unknown> | undefined)?.type
+        return
+      }
+      if (event.type === 'session.status') {
+        const status = (properties.status as Properties | undefined)?.type
         if (status === 'busy' || status === 'retry' || status === 'idle')
           await graph.send({
             kind: 'status',
@@ -179,9 +222,11 @@ export const ActiveAgentDashboard: Plugin = async ({ directory, client }, option
             cwd,
             agent: localAgents.get(sessionID) ?? null,
             status,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
           })
-      } else if (event.type === 'session.deleted' || event.type === 'session.error') {
+        return
+      }
+      if (event.type === 'session.deleted' || event.type === 'session.error') {
         localAgents.delete(sessionID)
         await graph.send({ kind: 'inactive', processId, sessionID })
       }

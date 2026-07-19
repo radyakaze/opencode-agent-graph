@@ -2,6 +2,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { extname, resolve } from 'node:path'
+import {
+  ELECTION_THROTTLE_MS,
+  FETCH_TIMEOUT_MS,
+  MAX_EVENT_BODY_BYTES,
+  STALE_PROCESS_CUTOFF_MS,
+  STALE_TICK_INTERVAL_MS,
+} from './constants.js'
 import { accept, processId, removeStale, setNotifier, state } from './dashboard-state.js'
 
 export type ServerOptions = { host: string; port: number; publicRoot: string }
@@ -10,13 +17,16 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
 }
 const packageVersion =
   typeof packageMetadata.version === 'string' ? packageMetadata.version : 'unknown'
-const types: Record<string, string> = {
+const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
   '.js': 'text/javascript',
   '.css': 'text/css',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
 }
+const FALLBACK_MIME = 'application/octet-stream'
+const SSE_PACKET = (data: string) => `event: state\ndata: ${data}\n\n`
+
 export function createGraphServer(options: ServerOptions) {
   let server: Server | undefined
   let starting: Promise<boolean> | undefined
@@ -40,7 +50,7 @@ export function createGraphServer(options: ServerOptions) {
       }
       req.on('data', (chunk: Buffer) => {
         value += chunk.toString()
-        if (value.length > 256_000) fail(new Error('body too large'))
+        if (value.length > MAX_EVENT_BODY_BYTES) fail(new Error('body too large'))
       })
       req.on('end', () => {
         if (!done) {
@@ -51,7 +61,7 @@ export function createGraphServer(options: ServerOptions) {
       req.on('error', fail)
     })
   const publish = () => {
-    const packet = `event: state\ndata: ${JSON.stringify(state())}\n\n`
+    const packet = SSE_PACKET(JSON.stringify(state()))
     for (const client of clients) {
       if (client.destroyed || !client.write(packet)) clients.delete(client)
     }
@@ -63,7 +73,7 @@ export function createGraphServer(options: ServerOptions) {
       if (path !== options.publicRoot && !path.startsWith(`${options.publicRoot}/`))
         throw new Error()
       res.writeHead(200, {
-        'content-type': `${types[extname(path)] ?? 'application/octet-stream'}; charset=utf-8`,
+        'content-type': `${MIME_TYPES[extname(path)] ?? FALLBACK_MIME}; charset=utf-8`,
       })
       res.end(await readFile(path))
     } catch {
@@ -83,7 +93,7 @@ export function createGraphServer(options: ServerOptions) {
           connection: 'keep-alive',
           'content-type': 'text/event-stream; charset=utf-8',
         })
-        res.write(`event: state\ndata: ${JSON.stringify(state())}\n\n`)
+        res.write(SSE_PACKET(JSON.stringify(state())))
         clients.add(res)
         req.on('close', () => clients.delete(res))
         return
@@ -134,11 +144,15 @@ export function createGraphServer(options: ServerOptions) {
     })
     return starting
   }
+  const canElect = () => Date.now() - lastElection >= ELECTION_THROTTLE_MS
+  const markElection = () => {
+    lastElection = Date.now()
+  }
   const healthy = async () => {
     try {
       return (
         await fetch(`http://${options.host}:${options.port}/health`, {
-          signal: AbortSignal.timeout(500),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         })
       ).ok
     } catch {
@@ -148,26 +162,27 @@ export function createGraphServer(options: ServerOptions) {
   async function send(message: Record<string, unknown>) {
     if (server) return accept(message)
     try {
-      if (!(await healthy()) && Date.now() - lastElection >= 2_000) {
-        lastElection = Date.now()
+      if (!(await healthy()) && canElect()) {
+        markElection()
         if (await start()) return accept(message)
       }
       await fetch(`http://${options.host}:${options.port}/events`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(message),
-        signal: AbortSignal.timeout(500),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
     } catch {
-      if (Date.now() - lastElection >= 2_000) {
-        lastElection = Date.now()
+      if (canElect()) {
+        markElection()
         if (await start()) accept(message)
       }
     }
   }
-  const staleTimer = setInterval(() => removeStale(Date.now() - 10_000), 3_000) as ReturnType<
-    typeof setInterval
-  >
+  const staleTimer = setInterval(
+    () => removeStale(Date.now() - STALE_PROCESS_CUTOFF_MS),
+    STALE_TICK_INTERVAL_MS,
+  ) as ReturnType<typeof setInterval>
   staleTimer.unref?.()
   return { start, send, processId }
 }

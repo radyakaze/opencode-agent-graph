@@ -1,11 +1,11 @@
 import {
+  Activity,
   ActivityType,
   AgentInfo,
-  DashboardState,
   DashboardEvent,
-  projectName,
-  Session,
+  DashboardState,
   Status,
+  projectName,
 } from './dashboard-types.js'
 
 const sessions = new Map<string, Session>()
@@ -15,6 +15,20 @@ const processCwds = new Map<string, Set<string>>()
 let updatedAt = new Date().toISOString()
 let notify: (() => void) | undefined
 export const processId = `proc_${process.pid}`
+
+type Session = {
+  id: string
+  processId: string
+  sessionId: string
+  cwd: string
+  projectName: string
+  agent: string | null
+  status: Status
+  startedAt: string
+  activeStartedAt: string | null
+  lastActivityAt: string
+  currentActivity: Activity | null
+}
 
 export function setNotifier(value: () => void): void {
   notify = value
@@ -48,6 +62,21 @@ function formatActivityLabel(tool: string, type: ActivityType): string {
   }
   return tool
 }
+function normalizeStatus(value: unknown): Status {
+  return value === 'retry' ? 'retry' : value === 'idle' ? 'idle' : 'busy'
+}
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null
+}
+function trackProcess(message: DashboardEvent): void {
+  if (typeof message.processId !== 'string') return
+  processes.set(message.processId, Date.now())
+  if (typeof message.cwd === 'string' && message.cwd) {
+    const cwds = processCwds.get(message.processId) ?? new Set<string>()
+    cwds.add(message.cwd)
+    processCwds.set(message.processId, cwds)
+  }
+}
 function mergeAgents(input: unknown, cwd: unknown): void {
   if (!Array.isArray(input) || typeof cwd !== 'string' || !cwd) return
   const registry = availableAgents.get(cwd) ?? new Map<string, AgentInfo>()
@@ -77,101 +106,108 @@ function mergeAgents(input: unknown, cwd: unknown): void {
   }
   if (changed) publish()
 }
-export function accept(input: unknown): void {
-  const message = input && typeof input === 'object' ? (input as DashboardEvent) : null
-  if (!message || typeof message.kind !== 'string' || typeof message.processId !== 'string') return
-  processes.set(message.processId, Date.now())
-  if (message.kind === 'hello' || message.kind === 'heartbeat' || message.kind === 'agents') {
-    if (typeof message.cwd === 'string' && message.cwd) {
-      const cwds = processCwds.get(message.processId) ?? new Set<string>()
-      cwds.add(message.cwd)
-      processCwds.set(message.processId, cwds)
-    }
-    mergeAgents(message.agents, message.cwd)
-    if (message.kind === 'agents') publish()
-    return
-  }
-  if (typeof message.sessionID !== 'string') return
-  const id = `${message.processId}:${message.sessionID}`
-  const previous = sessions.get(id)
-  if (message.kind === 'created') {
-    const cwd = typeof message.cwd === 'string' && message.cwd ? message.cwd : process.cwd()
-    sessions.set(id, {
-      id,
-      processId: message.processId,
-      sessionId: message.sessionID,
-      cwd,
-      projectName: projectName(cwd),
-      agent: typeof message.agent === 'string' ? message.agent : null,
-      status: previous?.status ?? 'idle',
-      startedAt: previous?.startedAt ?? timestamp(message.timestamp),
-      activeStartedAt: previous?.activeStartedAt ?? null,
-      lastActivityAt: previous?.lastActivityAt ?? timestamp(message.timestamp),
-      currentActivity: previous?.currentActivity ?? null,
-    })
+
+type Handler = (message: DashboardEvent) => void
+type SessionHandler = (id: string, previous: Session | undefined, message: DashboardEvent) => void
+
+function handleHello(message: DashboardEvent): void {
+  mergeAgents(message.agents, message.cwd)
+}
+function handleHeartbeat(message: DashboardEvent): void {
+  mergeAgents(message.agents, message.cwd)
+}
+function handleAgents(message: DashboardEvent): void {
+  mergeAgents(message.agents, message.cwd)
+  publish()
+}
+const controlHandlers: Record<string, Handler> = {
+  hello: handleHello,
+  heartbeat: handleHeartbeat,
+  agents: handleAgents,
+}
+
+function handleCreated(id: string, previous: Session | undefined, message: DashboardEvent): void {
+  const cwd = asString(message.cwd) ?? process.cwd()
+  const startedAt = previous?.startedAt ?? timestamp(message.timestamp)
+  sessions.set(id, {
+    id,
+    processId: String(message.processId),
+    sessionId: String(message.sessionID),
+    cwd,
+    projectName: projectName(cwd),
+    agent: asString(message.agent),
+    status: previous?.status ?? 'idle',
+    startedAt,
+    activeStartedAt: previous?.activeStartedAt ?? null,
+    lastActivityAt: previous?.lastActivityAt ?? timestamp(message.timestamp),
+    currentActivity: previous?.currentActivity ?? null,
+  })
+  publish()
+}
+function handleInactive(id: string): boolean {
+  if (sessions.delete(id)) {
     publish()
-    return
+    return true
   }
-  if (message.kind === 'inactive') {
-    if (sessions.delete(id)) publish()
-    return
-  }
-  if (message.kind === 'agent') {
-    if (previous && typeof message.agent === 'string') {
-      previous.agent = message.agent
+  return false
+}
+function handleAgent(id: string, previous: Session | undefined, message: DashboardEvent): void {
+  if (previous) {
+    const agent = asString(message.agent)
+    if (agent !== null) {
+      previous.agent = agent
       publish()
     }
-    return
   }
-  if (message.kind === 'toolActivity') {
-    if (previous) {
-      const at = timestamp(message.timestamp)
-      previous.lastActivityAt = at
-      const tool = typeof message.tool === 'string' ? message.tool : 'tool'
-      const phase = message.phase === 'after' ? 'after' : 'before'
-      if (phase === 'before') {
-        const type = classifyTool(tool)
-        previous.currentActivity = {
-          type,
-          label: formatActivityLabel(tool, type),
-          startedAt: at,
-          tool,
-        }
-      } else {
-        // Tool finished → back to thinking (or idle if not busy)
-        previous.currentActivity =
-          previous.status === 'busy' || previous.status === 'retry'
-            ? { type: 'thinking', label: 'Thinking', startedAt: at }
-            : null
-      }
-      publish()
+}
+function handleToolActivity(
+  id: string,
+  previous: Session | undefined,
+  message: DashboardEvent,
+): void {
+  if (!previous) return
+  const at = timestamp(message.timestamp)
+  previous.lastActivityAt = at
+  const tool = asString(message.tool) ?? 'tool'
+  const phase = message.phase === 'after' ? 'after' : 'before'
+  if (phase === 'before') {
+    const type = classifyTool(tool)
+    previous.currentActivity = {
+      type,
+      label: formatActivityLabel(tool, type),
+      startedAt: at,
+      tool,
     }
+  } else {
+    // Tool finished → back to thinking (or idle if not busy)
+    previous.currentActivity =
+      previous.status === 'busy' || previous.status === 'retry'
+        ? { type: 'thinking', label: 'Thinking', startedAt: at }
+        : null
+  }
+  publish()
+}
+function handleActivity(id: string, previous: Session | undefined, message: DashboardEvent): void {
+  if (!previous) return
+  const type = message.activityType as ActivityType
+  // Dedup: message.part.updated fires on every token delta, but the
+  // activity type doesn't change for the same part — skip publish when
+  // the type is unchanged so the dashboard doesn't thrash.
+  if (previous.currentActivity?.type === type) {
+    previous.lastActivityAt = timestamp(message.timestamp)
     return
   }
-  if (message.kind === 'activity') {
-    if (previous) {
-      const type = message.activityType as ActivityType
-      // Dedup: message.part.updated fires on every token delta, but the
-      // activity type doesn't change for the same part — skip publish when
-      // the type is unchanged so the dashboard doesn't thrash.
-      if (previous.currentActivity?.type === type) {
-        previous.lastActivityAt = timestamp(message.timestamp)
-        return
-      }
-      previous.lastActivityAt = timestamp(message.timestamp)
-      previous.currentActivity = {
-        type,
-        label: typeof message.label === 'string' ? message.label : 'Active',
-        startedAt: timestamp(message.timestamp),
-      }
-      publish()
-    }
-    return
+  previous.lastActivityAt = timestamp(message.timestamp)
+  previous.currentActivity = {
+    type,
+    label: asString(message.label) ?? 'Active',
+    startedAt: timestamp(message.timestamp),
   }
-  if (message.kind !== 'status') return
-  const status: Status =
-    message.status === 'retry' ? 'retry' : message.status === 'idle' ? 'idle' : 'busy'
-  const cwd = typeof message.cwd === 'string' && message.cwd ? message.cwd : process.cwd()
+  publish()
+}
+function handleStatus(id: string, previous: Session | undefined, message: DashboardEvent): void {
+  const status = normalizeStatus(message.status)
+  const cwd = asString(message.cwd) ?? process.cwd()
   const at = timestamp(message.timestamp)
   const currentActivity =
     status === 'idle'
@@ -183,11 +219,11 @@ export function accept(input: unknown): void {
         })
   sessions.set(id, {
     id,
-    processId: message.processId,
-    sessionId: message.sessionID,
+    processId: String(message.processId),
+    sessionId: String(message.sessionID),
     cwd: previous?.cwd ?? cwd,
     projectName: previous?.projectName ?? projectName(cwd),
-    agent: previous?.agent ?? (typeof message.agent === 'string' ? message.agent : null),
+    agent: previous?.agent ?? asString(message.agent),
     status,
     startedAt: previous?.startedAt ?? at,
     activeStartedAt: status === 'idle' ? null : (previous?.activeStartedAt ?? at),
@@ -195,6 +231,33 @@ export function accept(input: unknown): void {
     currentActivity,
   })
   publish()
+}
+const sessionHandlers: Record<string, SessionHandler> = {
+  created: handleCreated,
+  inactive: (id) => {
+    handleInactive(id)
+  },
+  agent: handleAgent,
+  toolActivity: handleToolActivity,
+  activity: handleActivity,
+  status: handleStatus,
+}
+
+export function accept(input: unknown): void {
+  const message = input && typeof input === 'object' ? (input as DashboardEvent) : null
+  if (!message || typeof message.kind !== 'string' || typeof message.processId !== 'string') return
+  trackProcess(message)
+  const control = controlHandlers[message.kind]
+  if (control) {
+    control(message)
+    return
+  }
+  if (typeof message.sessionID !== 'string') return
+  const id = `${message.processId}:${message.sessionID}`
+  const previous = sessions.get(id)
+  const handler = sessionHandlers[message.kind]
+  if (!handler) return
+  handler(id, previous, message)
 }
 export function removeStale(cutoff: number): void {
   let changed = false
