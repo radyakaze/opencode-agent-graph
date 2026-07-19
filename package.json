@@ -35,6 +35,7 @@
     "format:check": "oxfmt --check src public",
     "fix": "bun run format && bun run lint:fix",
     "check": "bun run format:check && bun run lint",
+    "test": "bun test src",
     "changelog": "changelogen",
     "release": "changelogen --release --no-output"
   },

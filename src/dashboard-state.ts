@@ -33,6 +33,19 @@ type Session = {
 export function setNotifier(value: () => void): void {
   notify = value
 }
+
+/**
+ * Test-only: reset all module-level state. Not part of the public API.
+ * Production code should never call this.
+ */
+export function __resetForTests(): void {
+  sessions.clear()
+  processes.clear()
+  availableAgents.clear()
+  processCwds.clear()
+  updatedAt = new Date().toISOString()
+  notify = undefined
+}
 function publish(): void {
   updatedAt = new Date().toISOString()
   notify?.()
@@ -61,6 +74,9 @@ function formatActivityLabel(tool: string, type: ActivityType): string {
     return `mcp ${server}`
   }
   return tool
+}
+function normalizeStatus(value: unknown): Status {
+  return value === 'retry' ? 'retry' : value === 'idle' ? 'idle' : 'busy'
 }
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value ? value : null
@@ -207,7 +223,7 @@ function handleActivity(id: string, previous: Session | undefined, message: Dash
 }
 function handleStatus(id: string, previous: Session | undefined, message: DashboardEvent): void {
   if (message.kind !== 'status') return
-  const status = message.status
+  const status = normalizeStatus(message.status)
   const cwd = message.cwd ?? process.cwd()
   const at = timestamp(message.timestamp)
   const currentActivity =
